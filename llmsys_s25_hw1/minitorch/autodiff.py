@@ -92,37 +92,54 @@ class Variable(Protocol):
 
 def topological_sort(variable: Variable) -> Iterable[Variable]:
     """
-    Computes the topological order of the computation graph.
-
-    Args:
-        variable: The right-most variable
-
-    Returns:
-        Non-constant Variables in topological order starting from the right.
+    Computes the topological order of the computation graph
+    starting from `variable`. Returns a list [leaf_node, ..., variable].
     """
-    # BEGIN ASSIGN1_1
-    # TODO
-    
-    raise NotImplementedError("Task Autodiff Not Implemented Yet")
-    # END ASSIGN1_1
+    visited = set()
+    topo_order = []
+
+    def dfs(node: Variable) -> None:
+        # If we've visited or the node is a constant, skip
+        # so we don't re-visit constants or re-visit nodes
+        if (node.unique_id in visited) or node.is_constant():
+            return
+        visited.add(node.unique_id)
+        # Visit each parent (dependency) first (DFS post-order)
+        for parent in node.parents:
+            dfs(parent)
+        # Post-order: add the node after visiting children
+        topo_order.append(node)
+
+    dfs(variable)
+    # topo_order is [leaves -> variable], but for backprop
+    # we usually want [variable -> leaves]. So reverse it:
+    return reversed(topo_order)
 
 
 def backpropagate(variable: Variable, deriv: Any) -> None:
     """
     Runs backpropagation on the computation graph in order to
-    compute derivatives for the leave nodes.
-
-    Args:
-        variable: The right-most variable
-        deriv  : Its derivative that we want to propagate backward to the leaves.
-
-    No return. Should write to its results to the derivative values of each leaf through `accumulate_derivative`.
+    compute derivatives for all leaf nodes. 
+    `deriv` is usually 1.0 if `variable` is a scalar loss.
     """
-    # BEGIN ASSIGN1_1
-    # TODO
-   
-    raise NotImplementedError("Task Autodiff Not Implemented Yet")
-    # END ASSIGN1_1
+    # 1. Get topological ordering from variable to leaves
+    order = list(topological_sort(variable))
+    # 2. A map from variable's unique_id to its accumulated gradient
+    grads = {}
+    # 3. The "final" node's gradient is the user-supplied `deriv`
+    grads[variable.unique_id] = deriv
+
+    # 4. Traverse in topological order, from final node -> leaves
+    for v in order:
+        d_out = grads.get(v.unique_id, 0.0)
+        if v.is_leaf():
+            # If it's a leaf node, just accumulate its gradient
+            v.accumulate_derivative(d_out)
+        else:
+            # If it's not a leaf, propagate gradients to its parents
+            for (parent, parent_grad_contrib) in v.chain_rule(d_out):
+                if not parent.is_constant():
+                    grads[parent.unique_id] = grads.get(parent.unique_id, 0.0) + parent_grad_contrib
 
 
 @dataclass

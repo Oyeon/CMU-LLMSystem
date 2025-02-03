@@ -1,3 +1,4 @@
+
 import random
 import pdb
 
@@ -10,62 +11,72 @@ import minitorch
 from datasets import load_dataset
 
 backend_name = "CudaKernelOps"
-
 if backend_name == "CudaKernelOps":
     from minitorch.cuda_kernel_ops import CudaKernelOps
     BACKEND = minitorch.TensorBackend(CudaKernelOps)
 
 BATCH = 10
 
-
 def RParam(*shape):
-    r = 0.1 * (minitorch.rand(shape, backend=BACKEND) - 0.5)
+    """
+    Create a random parameter with the given shape,
+    scaled to a smaller range for stable training.
+    """
+    # Example: 0.1 * (rand - 0.5) => random in [-0.05, 0.05]
+    r = 0.1 * (minitorch.rand(shape) - 0.5)
     return minitorch.Parameter(r)
 
 
+###############################################################
+# Linear Layer
+###############################################################
 class Linear(minitorch.Module):
     def __init__(self, in_size, out_size):
         super().__init__()
         
         # BEGIN ASSIGN1_3
-        # TODO
-        # 1. Initialize self.weights to be a random parameter of (in_size, out_size).
-        # 2. Initialize self.bias to be a random parameter of (out_size)
-        # 3. Set self.out_size to be out_size
-        # HINT: make sure to use the RParam function
-    
-        raise NotImplementedError
-    
+        # 1. Initialize self.weights as a random parameter of (in_size, out_size)
+        # 2. Initialize self.bias as a random parameter of (out_size,)
+        # 3. Store out_size in self.out_size
+        self.weights = RParam(in_size, out_size)
+        self.bias = RParam(out_size)
+        self.out_size = out_size
         # END ASSIGN1_3
 
     def forward(self, x):
-        
+        # x shape: (batch, in_size)
+        # print("DEBUG [Linear] input x shape =", x.shape)
+        batch, in_size = x.shape  # <-- Will fail if x is 3D    
         batch, in_size = x.shape
         
         # BEGIN ASSIGN1_3
-        # TODO
-        # 1. Reshape the input x to be of size (batch, in_size)
-        # 2. Reshape self.weights to be of size (in_size, self.out_size)
-        # 3. Apply Matrix Multiplication on input x and self.weights, and reshape the output to be of size (batch, self.out_size)
-        # 4. Add self.bias
-        # HINT: You can use the view function of minitorch.tensor for reshape
-
-        raise NotImplementedError
-    
+        # 1. x is already (batch, in_size) – so no additional reshape needed, unless you want to use x.view(...)
+        # 2. Reshape self.weights to (in_size, out_size)
+        w_reshaped = self.weights.value.view(in_size, self.out_size)
+        
+        # 3. Matrix multiply => (batch, out_size)
+        out = x @ w_reshaped
+        
+        # 4. Add bias, broadcast to (batch, out_size)
+        out = out + self.bias.value.view(1, self.out_size)
+        
+        # Return result (shape: (batch, out_size))
+        return out
         # END ASSIGN1_3
-        
-        
 
+
+###############################################################
+# Network
+###############################################################
 class Network(minitorch.Module):
     """
     Implement a MLP for SST-2 sentence sentiment classification.
 
-    This model should implement the following procedure:
-
-    1. Average over the sentence length.
-    2. Apply a Linear layer to hidden_dim followed by a ReLU and Dropout.
-    3. Apply a Linear to size C (number of classes).
-    4. Apply a sigmoid.
+    The steps are:
+    1. Average over the sentence length. (from shape [B, L, E] -> [B, E])
+    2. Apply a Linear layer to hidden_dim, then ReLU, then Dropout.
+    3. Apply a second Linear to size 1 (for 1 output class).
+    4. Apply a Sigmoid activation (final shape [batch]).
     """
 
     def __init__(
@@ -78,36 +89,53 @@ class Network(minitorch.Module):
         
         self.embedding_dim = embedding_dim
         self.dropout_prob = dropout_prob
-                
-        # BEGIN ASSIGN1_3
-        # TODO
-        # 1. Construct two linear layers: the first one is embedding_dim * hidden_dim, the second one is hidden_dim * 1
 
-        raise NotImplementedError
+        # BEGIN ASSIGN1_3
+        # 1. Construct two linear layers:
+        #    - First:  Linear(embedding_dim, hidden_dim)
+        #    - Second: Linear(hidden_dim, 1)
+        self.linear1 = Linear(embedding_dim, hidden_dim)
+        self.linear2 = Linear(hidden_dim, 1)
         # END ASSIGN1_3
-        
-        
 
     def forward(self, embeddings):
         """
-        embeddings tensor: [batch x sentence length x embedding dim]
+        embeddings shape: [batch, sentence_length, embedding_dim]
         """
-    
         # BEGIN ASSIGN1_3
-        # TODO
-        # 1. Average the embeddings on the sentence length dimension to obtain a tensor of (batch, embedding_dim)
+        # 1. Average over sentence length => shape [batch, embedding_dim]
+        # print("DEBUG [Network] input embeddings shape =", embeddings.shape)
+        # 1) Manual sum + divide for mean
+        x = embeddings.sum(dim=1)  # shape -> likely (5, 1, 150)
+
+        # 2) Divide by sentence length => shape still (5, 1, 150)
+        sentence_length = embeddings.shape[1]  # e.g. 15
+        x = x / sentence_length
+
+        # 3) Reshape from (5, 1, 150) to (5, 150)
+        x = x.view(x.shape[0], x.shape[2])        
+        # print("DEBUG [Network] after mean shape =", x.shape)        
         # 2. Apply the first linear layer
-        # 3. Apply ReLU and dropout (with dropout probability=self.dropout_prob)
-        # 4. Apply the second linear layer
-        # 5. Apply sigmoid and reshape to (batch)
-        # HINT: You can use minitorch.dropout for dropout, and minitorch.tensor.relu for ReLU
-        
-        raise NotImplementedError
-    
+        x = self.linear1(x)
+
+        # 3. Apply ReLU and dropout
+        x = x.relu()
+        x = minitorch.dropout(x, rate=self.dropout_prob, ignore=not self.training)
+
+        # 4. Apply the second linear layer => shape [batch, 1]
+        x = self.linear2(x)
+
+        # 5. Apply sigmoid => shape still [batch, 1], then reshape to [batch]
+        x = x.sigmoid()
+        x = x.view(x.shape[0])
+
+        return x
         # END ASSIGN1_3
 
 
-# Evaluation helper methods
+# ===================================================================
+# Evaluation Helper Methods
+# ===================================================================
 def get_predictions_array(y_true, model_output):
     predictions_array = []
     model_output = model_output.view(model_output.shape[0])
@@ -128,11 +156,10 @@ def get_accuracy(predictions_array):
     for (y_true, y_pred, logit) in predictions_array:
         if y_true == y_pred:
             correct += 1
-    return correct / len(predictions_array)
+    return correct / len(predictions_array) if len(predictions_array) > 0 else 0.0
 
 
 best_val = 0.0
-
 
 def default_log_fn(
     epoch,
@@ -142,21 +169,26 @@ def default_log_fn(
     validation_accuracy,
 ):
     global best_val
-    best_val = (
-        best_val if best_val > validation_accuracy[-1] else validation_accuracy[-1]
-    )
+    # Track best validation accuracy
+    if validation_accuracy:
+        best_val = max(best_val, validation_accuracy[-1])
+
     print(f"Epoch {epoch}, loss {train_loss}, train accuracy: {train_accuracy[-1]:.2%}")
     if len(validation_predictions) > 0:
         print(f"Validation accuracy: {validation_accuracy[-1]:.2%}")
         print(f"Best Valid accuracy: {best_val:.2%}")
 
 
+# ===================================================================
+# Sentiment Trainer
+# ===================================================================
 class SentenceSentimentTrain:
-    '''
-        The trainer class of sentence sentiment classification
-    '''
+    """
+    The trainer class of sentence sentiment classification.
+    """
+
     def __init__(self):
-        self.model = Network()
+        self.model = Network()  # Your MLP from Problem 3
 
     def train(
         self,
@@ -170,71 +202,124 @@ class SentenceSentimentTrain:
         model = self.model
         (X_train, y_train) = data_train
         n_training_samples = len(X_train)
+
+        # Create an Adam optimizer
         optim = minitorch.Adam(self.model.parameters(), learning_rate)
+        
         losses = []
         train_accuracy = []
         validation_accuracy = []
+
         for epoch in range(1, max_epochs + 1):
             total_loss = 0.0
             n_batches = 0
             
-            model.train()
+            model.train()  # enable training mode
             train_predictions = []
             batch_size = min(batch_size, n_training_samples)
             
-            for batch_num, example_num in enumerate(
-                range(0, n_training_samples, batch_size)
-            ):
-                out=None
-                
+            # -----------------------------------------------------------------
+            # Training Loop Over Batches
+            # -----------------------------------------------------------------
+            for start_idx in range(0, n_training_samples, batch_size):
+                end_idx = start_idx + batch_size
+                x_data = X_train[start_idx:end_idx]
+                y_data = y_train[start_idx:end_idx]
+
                 # BEGIN ASSIGN1_4
-                # TODO
-                # 1. Create x and y using minitorch.tensor function through our CudaKernelOps backend
-                # 2. Set requires_grad=True for x and y
-                # 3. Get the model output (as out)
-                # 4. Calculate the loss using Binary Crossentropy Loss
-                # 5. Call backward function of the loss
-                # 6. Use Optimizer to take a gradient step
-                
-                raise NotImplementedError
+                # 1) Create x and y as minitorch tensors, with requires_grad=True
+                x = minitorch.tensor(x_data, backend=BACKEND, requires_grad=True)
+                y = minitorch.tensor(y_data, backend=BACKEND, requires_grad=True)
+
+                # 2) Forward pass -> out
+                out = model(x)
+
+                # 3) Calculate loss
+                # loss = minitorch.binary_cross_entropy(out, y)
+                loss = binary_cross_entropy(out, y)  # <--- custom BCE
+
+                # 4) Zero out old gradients
+                optim.zero_grad()
+
+                # 5) Backprop
+                loss.backward()
+
+                # 6) Use optimizer to take a step
+                optim.step()
                 # END ASSIGN1_4
-                
-                
+
                 # Save training results
                 train_predictions += get_predictions_array(y, out)
-                total_loss += loss[0]
+                total_loss += float(loss[0])
                 n_batches += 1
-        
-            # Evaluate on validation set at the end of the epoch
+
+            # -----------------------------------------------------------------
+            # Validation Step
+            # -----------------------------------------------------------------
             validation_predictions = []
             if data_val is not None:
                 (X_val, y_val) = data_val
-                model.eval()
-                
-                # BEGIN ASSIGN1_4
-                # TODO
-                # 1. Create x and y using minitorch.tensor function through our CudaKernelOps backend
-                # 2. Get the output of the model
-                # 3. Obtain validation predictions using the get_predictions_array function, and add to the validation_predictions list
-                # 4. Obtain the validation accuracy using the get_accuracy function, and add to the validation_accuracy list
-                
-                raise NotImplementedError
-                
-                # END ASSIGN1_4
-                
-                model.train()
+                model.eval()  # disable dropout, etc.
 
-            train_accuracy.append(get_accuracy(train_predictions))
-            losses.append(total_loss/n_batches)
+                # BEGIN ASSIGN1_4
+                # 1) Create x and y as minitorch tensors (no grad needed)
+                x_val = minitorch.tensor(X_val, backend=BACKEND)
+                y_val_t = minitorch.tensor(y_val, backend=BACKEND)
+
+                # 2) Forward pass -> out_val
+                out_val = model(x_val)
+
+                # 3) Obtain validation predictions
+                val_predictions = get_predictions_array(y_val_t, out_val)
+                validation_predictions += val_predictions
+
+                # 4) Obtain the validation accuracy
+                val_acc = get_accuracy(val_predictions)
+                validation_accuracy.append(val_acc)
+                # END ASSIGN1_4
+
+                model.train()  # switch back to training mode
+
+            # Compute training accuracy this epoch
+            epoch_train_acc = get_accuracy(train_predictions)
+            train_accuracy.append(epoch_train_acc)
+
+            # Average loss across all batches
+            avg_loss = total_loss / n_batches if n_batches > 0 else 0.0
+            losses.append(avg_loss)
+
+            # Log everything
             log_fn(
                 epoch,
-                total_loss/n_batches,
+                avg_loss,
                 train_accuracy,
                 validation_predictions,
                 validation_accuracy,
             )
-        
 
+def binary_cross_entropy(pred, target, eps=1e-6):
+    """
+    pred, target: Tensors of shape (batch,)
+    Return a scalar Tensor representing BCE:
+        BCE = -( y * log(pred+eps) + (1-y) * log(1-pred+eps) ).mean()
+    """
+    # Create a 'one' Tensor with the same shape as pred or target
+    one = pred.zeros() + 1.0  # shape (batch,)
+
+    # term1 = y * log(pred + eps)
+    term1 = target * (pred + eps).log()
+
+    # term2 = (1 - y) * log((1 - pred) + eps)
+    term2 = (one - target) * ((one - pred) + eps).log()
+
+    # sum them, average, negate
+    out_mean = (term1 + term2).mean()
+    return out_mean * -1.0
+
+
+# ===================================================================
+# Data Encoding & Execution
+# ===================================================================
 def encode_sentences(
     dataset, N, max_sentence_len, embeddings_lookup, unk_embedding, unks
 ):
@@ -259,15 +344,14 @@ def encode_sentences(
 
 
 def encode_sentiment_data(dataset, pretrained_embeddings, N_train, N_val=0):
-
-    #  Determine max sentence length for padding
+    #  Determine max sentence length
     max_sentence_len = 0
     for sentence in dataset["train"]["sentence"] + dataset["validation"]["sentence"]:
         max_sentence_len = max(max_sentence_len, len(sentence.split()))
 
     unks = set()
     unk_embedding = [
-        0.1 * (random.random() - 0.5) for i in range(pretrained_embeddings.d_emb)
+        0.1 * (random.random() - 0.5) for _ in range(pretrained_embeddings.d_emb)
     ]
     X_train, y_train = encode_sentences(
         dataset["train"],
@@ -291,22 +375,29 @@ def encode_sentiment_data(dataset, pretrained_embeddings, N_train, N_val=0):
 
 
 if __name__ == "__main__":
-    train_size = 450
-    validation_size = 100
-    learning_rate = 0.25
-    max_epochs = 250
-    embedding_dim = 50
+    from embeddings import GloveEmbedding
+
+    train_size = 450 #450
+    validation_size = 100 #100
+    learning_rate = 0.25 #0.25
+    max_epochs = 250 #250
+    embedding_dim = 50 #50
+
+    dataset = load_dataset("glue", "sst2")
+    pretrained_embeddings = GloveEmbedding("wikipedia_gigaword", d_emb=embedding_dim, show_progress=True)
 
     (X_train, y_train), (X_val, y_val) = encode_sentiment_data(
-        load_dataset("glue", "sst2"),
-        embeddings.GloveEmbedding("wikipedia_gigaword", d_emb=embedding_dim, show_progress=True),
+        dataset,
+        pretrained_embeddings,
         train_size,
         validation_size,
     )
+
     model_trainer = SentenceSentimentTrain()
     model_trainer.train(
         (X_train, y_train),
         learning_rate,
+        batch_size=BATCH,
         max_epochs=max_epochs,
         data_val=(X_val, y_val),
     )
