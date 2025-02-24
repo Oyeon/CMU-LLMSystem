@@ -402,6 +402,65 @@ if __name__ == "__main__":
         data_val=(X_val, y_val),
     )
     
+
+def generate(model,
+             examples,
+             src_key,
+             tgt_key,
+             tokenizer,
+             model_max_length,
+             backend,
+             desc):
+    """
+    Generates target sequences (English) from source sequences (German),
+    by repeatedly argmax-decoding the next token.
+
+    For each example:
+      1) Tokenize the source text + <eos_de>.
+      2) Repeatedly run the model to get next-token logits, take argmax,
+         and append it to token_ids.
+      3) Stop if we see <eos_en> or exceed model_max_length.
+      4) Decode tokens from the end of the source onward.
+
+    Returns a list of generated target sentences (strings).
+    """
+    import tqdm
+    model.eval()
+    gen_sents = []
+
+    # Disable gradient tracking in generation mode
+    with minitorch.no_grad():
+        for example in tqdm.tqdm(examples, desc=f'Generating {desc}'):
+            # 1) Tokenize the German source + <eos_de>
+            token_ids = tokenizer(f"{example[src_key]}<eos_{src_key}>")['input_ids']
+            len_src = len(token_ids)
+
+            # 2) Repeatedly predict next token until <eos_en> or max length
+            while len(token_ids) < model_max_length:
+                # shape: [1, current_length]
+                idx = minitorch.tensor(token_ids, backend=backend).view(1, -1)
+                logits = model(idx=idx)  # => shape [1, seq_len, vocab_size]
+
+                # Take the last position's logits => shape [vocab_size]
+                last_logits = logits[0, -1, :]
+
+                # Argmax to pick the highest-prob token
+                next_id = last_logits.argmax()
+                gen_id = int(next_id.item())
+
+                # Stop if it's the end-of-sentence token for English
+                if gen_id == tokenizer.vocab[f"<eos_{tgt_key}>"]:
+                    break
+
+                token_ids.append(gen_id)
+
+            # 3) Decode from just after source tokens => predicted target
+            gen_sents.append(tokenizer.decode(token_ids[len_src:]))
+
+    return gen_sents
+
+
+
 # from functools import partial
 # import time
 # import os
