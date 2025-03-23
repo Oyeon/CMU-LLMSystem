@@ -1,1 +1,14 @@
-myenv
+myenv/
+test/
+
+/llmsys_s25_hw4/workdir/
+/llmsys_s25_hw4/workdir_mp/
+/llmsys_s25_hw4/workdir_multi/
+/llmsys_s25_hw4/workdir_pp/
+/llmsys_s25_hw4/workdir_single/
+/llmsys_s25_hw4/submit_figures/
+
+
+# Ignore gradient files under llmsys_s25_hw4/tests
+/llmsys_s25_hw4/tests/model0_gradients.pth
+/llmsys_s25_hw4/tests/model1_gradients.pth
