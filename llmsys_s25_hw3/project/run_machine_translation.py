@@ -1,3 +1,9 @@
+import pathlib, sys
+ROOT = pathlib.Path(__file__).resolve().parent.parent   # …/llmsys_s25_hw3
+if str(ROOT) not in sys.path:                          # put project root on sys.path
+    sys.path.insert(0, str(ROOT))
+
+
 import os
 import json
 import fire
